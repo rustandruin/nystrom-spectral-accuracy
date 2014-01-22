@@ -1,0 +1,424 @@
+\documentclass[xcolor={svgnames,pdftex,dvipsnames,table},10pt]{beamer} %was usenames
+\usefonttheme[]{serif} 
+\usefonttheme{professionalfonts}
+\usecolortheme[named=MidnightBlue]{structure}
+\usetheme[height=7mm]{Rochester}
+\setbeamertemplate{blocks}[rounded][shadow=true]
+\useoutertheme{umbcfootline}
+\useinnertheme{umbctribullets}
+\useinnertheme{umbcboxes}
+\setfootline{\insertshortauthor \quad \insertshorttitle \quad \insertshortdate \hfill \insertframenumber/\inserttotalframenumber}
+\usepackage[utf8]{inputenc}
+%\usepackage{kerkis}
+\usepackage{bm}
+\usepackage{colortbl}
+%\usepackage[scaled=0.875]{helvet}%
+\renewcommand{\ttdefault}{lmtt}%
+
+%add footnotes to indicate support
+\usepackage[absolute,overlay]{textpos} 
+\newenvironment{support}[2]{% 
+  \begin{textblock*}{\textwidth}(#1,#2) 
+      \footnotesize\it\bgroup\color{black!50}}{\egroup\end{textblock*}}
+			
+\usepackage{tikz}
+\usetikzlibrary{arrows,shapes,fit}
+\tikzstyle{every picture}+=[remember picture]
+\tikzstyle{na} = [baseline=-.5ex]
+\everymath{\displaystyle}
+\pgfdeclarelayer{background}
+\pgfsetlayers{background,main}
+
+\hypersetup{%
+  pdftitle={Nystrom matrix approximation},%
+  pdfauthor={Alex Gittens},%
+  pdfsubject={private presentation},%
+  pdfkeywords={low rank approximation, random matrices, numerical linear algebra, randomized algorithms}%
+}
+\hypersetup{plainpages    = false,
+            pdfnewwindow  = false}
+            %pdfpagemode   = FullScreen}
+\hypersetup{colorlinks=true,urlcolor=blue}
+
+% add bookmarks for easier navigations
+\usepackage{bookmark}
+\usepackage{etoolbox}
+\makeatletter
+\apptocmd{\beamer@@frametitle}{
+  % keep this line to add the frame title to the TOC at the "subsection level"
+  \addtocontents{toc}{\protect\beamer@subsectionintoc{\the\c@section}{0}{#1}{\the\c@page}{\the\c@part}%
+        {\the\beamer@tocsectionnumber}}%
+  % keep this line to add a bookmark that shows up in the PDF TOC at the subsection level
+  \bookmark[page=\the\c@page,level=3]{#1}
+  }%
+  {\message{** patching of \string\beamer@@frametitle succeeded **}}%
+  {\message{** patching of \string\beamer@@frametitle failed **}}%
+\makeatother
+
+%\setbeamertemplate{navigation symbols}{}
+\setbeamercovered{dynamic}
+
+
+\newcommand{\mat}[1]{\ensuremath{\mathbf{#1}}}
+\newcommand{\Prob}[1]{\ensuremath{\mathbb{P}\left\{#1 \right\}}}
+\renewcommand{\star}{*}
+
+\newcommand{\E}{\ensuremath{\mathbb{E}}}
+\newcommand{\C}{\ensuremath{\mathbb{C}}}
+\newcommand{\R}{\ensuremath{\mathbb{R}}}
+\newcommand{\N}{\ensuremath{\mathbb{N}}}
+\newcommand{\e}{\ensuremath{\mathrm{e}}}
+
+\DeclareMathOperator{\tr}{tr}
+
+\newtheorem*{thm}{Theorem}
+
+% Titlepage info
+\title{Nystr\"om matrix approximation}
+\subtitle[]{an overview and new results}
+\author[A. Gittens]{Alex Gittens}
+\institute[Caltech]{%
+Department of Computing and Mathematical Sciences \\
+California Institute of Technology \\
+\href{mailto:gittens@caltech.edu}{gittens@caltech.edu} \\
+}
+
+\date[\today]{\today}
+
+\begin{document}
+
+\begin{frame}[plain]
+%\begin{support}{19mm}{85mm}
+%${}^\star$Research supported by ONR and AFOSR awards and a Sloan Fellowship.
+%\end{support}
+\titlepage
+\end{frame}
+
+
+\begin{frame}{Motivation}
+\begin{displaybox}{0.9\linewidth}
+ \parbox{\linewidth}{\(\mat{A} \in \R^{m \times n}\) is a \emph{huge} matrix. Given \(k \ll \min\{m,n\}, \) we would like either:}
+\begin{enumerate}
+ \item a low-rank approximation to \(\mat{A}\), or
+ \item approximations of the top $k$ eigenvectors (or singular vectors) of \(\mat{A}.\) 
+\end{enumerate}
+\end{displaybox}
+
+\begin{itemize}
+ \item This abstract problem is ubiquitous in modern data processing: machine learning, image processing, statistical analysis ... 
+
+ \item Traditional approaches (via truncated SVD) cost at least $\mathrm{O}(m n k)$ flops, as do methods based on random projections.
+
+ \item Column/row-sampling based methods provide faster alternatives, up to $\mathrm{O}(k^3 + (n+m)k^2).$
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{Motivation from Eigenvector approximation viewpoint}
+ 
+Nystr\"om extension is a method used in numerical PDEs to approximate eigenfunctions/values of integral operators.
+\[
+ \int_0^1 K(x,y) f_\ell(y)\,dy = \lambda_\ell f_\ell(x), \quad x \in [0,1], \ell \in \N.
+\]
+\begin{itemize}
+ \item  Discretize the interval and solve the linear algebra problem
+\[
+ \frac{1}{m} \sum_{j=1}^m K(x_i, x_j) v_\ell(x_j) = \lambda_\ell v_\ell(x_i)
+\]
+\item Extend by interpolation to estimate the eigenfunction
+\[
+ \hat{f}_\ell(x) = \frac{1}{m} \sum_{j=1}^m K(x, x_j) \frac{v_\ell(x_j)}{\lambda_\ell}.
+\]
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+ In the matrix Nystr\"om method, ``discretization'' consists of sampling columns. WLOG, take
+\[
+ \mat{K} = \begin{pmatrix} \mat{A} & \mat{B} \\ \mat{B}^T & \mat{C} \end{pmatrix} \in \R^{n \times n} 
+\]
+to be SPSD, and assume $\mat{A} = \mat{U} \mat{\Lambda} \mat{U}^t$ is invertible.
+
+Extend the eigenvectors of $\mat{A}$ to $\mat{K}$ by
+\[
+ \tilde{\mat{U}} = \begin{pmatrix} \mat{U} \\ \mat{B}^T \mat{U} \mat{\Lambda}^{-1} \end{pmatrix}.
+\]
+The columns of $\tilde{\mat{U}}$ can be orthogonalized in $\mathrm{O}(nm^2)$ time. 
+\end{frame}
+
+\begin{frame}{Overview}
+\begin{itemize}
+ \item Traditional methods of nonasymptotic random matrix theory bound the tails of maximum eigenvalues,
+\[
+\lambda_1(\mat{A}) = \max_{\|\vec{x}\|=1} \|\mat{A} \vec{x}\|.
+\]
+ \item They are less useful for addressing interior eigenvalues,
+\[
+\lambda_k(\mat{A}) = \min_{\substack{ \mat{V} \in \C^{p \times (p-k+1)} \\ \mat{V}^\star\mat{V}=\mat{I}}} \lambda_1(\mat{V}^\star  \mat{A} \mat{V})
+ = \max_{\substack{ \mat{V} \in \C^{p \times k} \\ \mat{V}^\star\mat{V}=\mat{I}}} \lambda_k(\mat{V}^\star \mat{A} \mat{V}).
+\]
+ \item The Matrix Laplace Transform, introduced by Ahlswede and Winter (2002), is easily adaptable to address interior eigenvalues, as it is already a variational method.
+ \item We illustrate this by using this technique to bound the number of samples needed to estimate the dominant eigenvalues of a covariance matrix to relative precision.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Problem Statement: Covariance Estimation}
+
+Let $\mat{x} \in \R^p$ be a zero-mean random vector. Information on the dependency structure of $\mat{x}$ is captured by the covariance matrix
+\[
+\mat{\Sigma} = \E \mat{x} \mat{x}^\star.
+\]
+The sample covariance matrix is a classical estimator for $\mat{\Sigma}:$
+\[
+\widehat{\mat{\Sigma}}_n = \frac{1}{n} \sum\nolimits_{i=1}^n \mat{x}_i\mat{x}_i^\star,
+\]
+where $\mat{x}_i$ are independent samples of $\mat{x}.$
+\vskip1em
+\begin{displaybox}{0.7\linewidth}
+\parbox{\linewidth}{How many samples $n$ of $\mat{x}$ are required so that $\widehat{\mat{\Sigma}}_n$ accurately estimates $\mat{\Sigma}?$}
+\end{displaybox}
+
+\end{frame}
+
+\begin{frame}{Covariance Estimation in Spectral Norm}
+
+Accuracy is typically measured in spectral norm.
+\vspace{1em}
+\begin{displaybox}{0.7\linewidth}
+\parbox{\linewidth}{%
+How many samples $n$ of $\mat{x}$ ensure that
+\[ \|\mat{\Sigma} - \widehat{\mat{\Sigma}}_n\|_2 \leq \varepsilon \|\mat{\Sigma}\|_2? \]
+}
+\end{displaybox}
+
+\begin{itemize}
+    \item for \textcolor{OliveGreen}{log-concave} distributions $\Omega(p)$ samples suffice (Adamczak et al. 2011), 
+    \item for distributions with \textcolor{OliveGreen}{finite fourth moments}, $\tilde{\Omega}(p)$ samples suffice (Vershynin 2011a), 
+		\item for distributions with \textcolor{OliveGreen}{finite $2+\varepsilon$ moments} that satisfy a regularity condition, $\Omega(p)$ samples suffice (Vershynin 2011b),
+    \item for distributions with \textcolor{OliveGreen}{finite second moments}, $\Omega(p\log p)$ samples suffice (Rudelson 1999). 
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Estimation of dominant eigenvalues of $\mat{\Sigma}$}
+A relative spectral error bound,
+\[
+\|\mat{\Sigma} - \widehat{\mat{\Sigma}}_n\|_2 \leq \varepsilon \|\mat{\Sigma}\|_2,
+\]
+allows estimation of the top eigenvalue $\lambda_1(\mat{\Sigma}),$ \ldots
+
+\vspace{1em}
+but does \emph{not} allow estimation of the remaining eigenvalues:
+\[
+|\lambda_k(\mat{\Sigma}) - \lambda_k(\widehat{\mat{\Sigma}}_n)| < \varepsilon \|\mat{\Sigma}\|_2 
+\]
+is not a useful estimate if $\lambda_k \ll \lambda_1.$
+
+\vspace{1em}
+Established bounds on relative spectral error require that $n = \Omega(\kappa(\mat{\Sigma}_\ell)^2 p)$ measurements be taken to ensure relative error recovery of the top $\ell$ eigenvalues.
+\end{frame}
+
+\begin{frame}{... and the unsatisfactory dimensional dependence}
+
+In practice, $\mat{\Sigma}$ often has a decaying spectrum.
+What if we want accurate estimates of its dominant eigenvalues?
+\vspace{1em}
+\begin{displaybox}{0.7\textwidth}
+\parbox{\textwidth}{%
+How many samples $n$ of $\mat{x}$ ensure the top $\ell \ll p$ eigenvalues are estimated with relative accuracy,
+\[
+|\lambda_k(\mat{\Sigma}) - \lambda_k(\widehat{\mat{\Sigma}}_n)| \leq \varepsilon \lambda_k(\mat{\Sigma})?
+\]
+}
+\end{displaybox}
+
+\vspace{1em}
+Do we really need O($p$) measurements to recover just a few of the top eigenvalues?
+
+\end{frame}
+
+\begin{frame}{Reduced dimensional dependence, assuming decay}
+
+\begin{thm}
+Consider $n$ independent samples of a $\mathcal{N}(\mat{0}, \mat{\Sigma})$ distribution. Assume $\{\lambda_k\}$ decays sufficiently fast for $k > \ell$. If $\varepsilon \in (0, 1]$ and 
+\[
+n = \Omega(\varepsilon^{-2} \kappa(\mat{\Sigma}_\ell)^2 \ell \log p),
+\]
+then with high probability, for each $k=1,\ldots,\ell,$
+\[
+|\lambda_k(\widehat{\mat{\Sigma}}_n) - \lambda_k(\mat{\Sigma})| \leq \varepsilon \lambda_k(\mat{\Sigma}). 
+\]
+\end{thm}
+\vskip1em
+Compare to previous estimate of $n = \Omega(\varepsilon^{-2} \kappa(\mat{\Sigma}_\ell)^2 p):$
+\begin{itemize}
+	\item Takes advantage of the decay in the residual eigenvalues.
+	\item Requires O$\Big(\frac{p}{\ell \log p}\Big)$ fewer samples 
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Decay condition}
+ ``Sufficient'' decay means
+	\[ 
+	\sum_{k > \ell} \lambda_k/\lambda_1 \leq C.
+	\] 
+	This condition is satisfied if, e.g., the tail eigenvalues ($k > \ell$)
+	\begin{itemize}
+	 \item decay like $k^{-(1+\delta)}$ for some $\delta > 0,$ or
+	 \item correspond to low-power white noise.
+	\end{itemize}
+
+Other decay assumptions may be used.
+\end{frame}
+
+\begin{frame}{Estimation of individual eigenvalues}
+We control, for each $k$, the probabilities that $\hat{\lambda}_k$ upper/lower-bounds $\lambda_k.$
+\begin{itemize}
+\item \( \displaystyle \Prob{\frac{\hat{\lambda}_k}{1-\epsilon} > \lambda_k} > 1- p^{-\beta} \) when
+\[
+ n \geq \frac{1}{32 \varepsilon^2} \tikz[baseline] \node[anchor=base,rounded corners,fill=OliveGreen!30] {$\kappa(\mat{\Sigma}_k) \frac{\sum\nolimits_{i\leq k} \lambda_i}{\lambda_k}(\log k + \beta \log p)$};
+\]
+
+	\item \( \displaystyle \Prob{\frac{\hat{\lambda}_k}{1+\varepsilon} < \lambda_k} > 1-p^{-\beta} \) when
+\[
+n \geq \frac{1}{32\varepsilon^2} 
+\tikz[baseline] \node[anchor=base,rounded corners,fill=BurntOrange!30] {$\frac{\sum\nolimits_{i \geq k} \lambda_i}{\lambda_k} \textstyle (\log (p-k+1) + \beta \log p)$}; 
+\]
+
+\item Assuming decay (necessary only for the lower bounds), the number of samples needed: 
+\begin{center}
+	\begin{tabular}{l >{\columncolor{OliveGreen!30}}c >{\columncolor{BurntOrange!30}}c}
+	\multicolumn{1}{l}{} & \multicolumn{1}{l}{upper bound} & \multicolumn{1}{l}{lower bound} \\ 
+		$\lambda_1$ & O$(\log p)$ & O$(\ell \log p)$ \\
+		$\lambda_\ell$ & O$(\kappa^2(\mat{\Sigma}_\ell) \ell \log p)$ & O$(\kappa(\mat{\Sigma}_\ell) \log p)$ 
+	\end{tabular}
+\end{center}
+
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Proof sketch}
+
+It suffices to show
+\[
+ \textstyle \Prob{\hat{\lambda}_k \geq (1+\varepsilon) \lambda_k } \quad \text{ and } \quad \Prob{\hat{\lambda}_k \leq (1-\varepsilon) \lambda_k}
+\]
+decay like $\mathrm{C} \exp(-\mathrm{c} n \epsilon^2)$ when $\epsilon$ is sufficiently small.
+
+\begin{enumerate}
+		
+	\item Reduce the probability of each case occuring to the probability that the norm of an appropriate matrix is large.
+	
+	\item Use matrix Bernstein bounds to estimate the decay of these norms. 
+	
+	\item Take a union bound over the indices $k.$ 
+ \end{enumerate}
+ 
+\end{frame}
+
+\begin{frame}{Reduction for $\hat{\lambda}_k \geq \lambda_k + t$}
+
+Let $\mat{B}$ have orthonormal columns and span the bottom $(p-k+1)$-dimensional invariant subspace of $\mat{\Sigma}.$
+\vskip0.5em
+\underline{Claim}
+\[
+\begin{tikzpicture}
+\node[rounded corners, draw=BurntOrange!70, fill=BurntOrange!30] (keyineq)  
+{$\Prob{
+\hat{\lambda}_k
+\geq 
+\lambda_k + t 
+} \leq
+\Prob{
+\lambda_1(\mat{B}^\star \widehat{\mat{\Sigma}}_n \mat{B})
+\geq  
+\lambda_1(\mat{B}^\star \mat{\Sigma} \mat{B}) + t }.$};
+\end{tikzpicture}
+\]
+
+\emph{Proof.}
+
+By Courant--Fischer,
+\[
+ \lambda_k(\mat{\Sigma}) = \lambda_1(\mat{B}^\star \mat{\Sigma} \mat{B})
+\]
+
+and
+\[
+\lambda_k(\widehat{\mat{\Sigma}}_n) = \min_{\substack{ \mat{V} \in \C^{p \times (p-k+1)} \\ \mat{V}^\star\mat{V}=\mat{I}}} \lambda_1(\mat{V}^\star \widehat{\mat{\Sigma}}_n\mat{V}) \leq \lambda_1(\mat{B}^\star \widehat{\mat{\Sigma}}_n \mat{B}).
+\]
+
+\qed
+\end{frame}
+
+\begin{frame}{Using the reduction}
+Need to control RHS of 
+\[
+\Prob{\hat{\lambda}_k \geq \lambda_k + t }
+\leq
+\Prob{
+\lambda_1(\mat{B}^\star \widehat{\mat{\Sigma}}_n \mat{B}) \geq  
+\lambda_1(\mat{B}^\star \mat{\Sigma} \mat{B}) + t 
+}
+\]
+
+Note $\mat{B}^\star \widehat{\mat{\Sigma}}_n \mat{B} = \sum\nolimits_i \mat{B}^\star \mat{x}_i\mat{x}_i^\star \mat{B}$ is a sum of independent rank-one Wishart matrices --- naturally suggests use of matrix analogues of classical probability inequalities.
+
+Use estimates of the matrix moments of the summands:
+\[
+\E(\mat{B}^\star \mat{x} \mat{x}^\star \mat{B})^m \preceq 2^m m!\, \Big(\sum_{i \geq k} \lambda_i\Big)^{m-1} \cdot \mat{B}^\star \mat{\Sigma} \mat{B}.
+\]
+\end{frame}
+
+\begin{frame}{Matrix Bernstein Inequality }
+ We use the following moment-based matrix analog of Bernstein's inequality.
+
+\begin{thm}[Matrix Moment-Bernstein Inequality]
+Suppose the $d$-dimensional self-adjoint matrices $\{\mat{G}_i\}$ are i.i.d. copies of $\mat{G}$ and 
+\[ \E(\mat{G}^m) \preceq \frac{m!}{2} A^{m-2} \cdot \mat{C}^2 \quad \text{ for } m =2,3,4,\ldots.
+\]
+Set
+\[ \mu = n \lambda_1(\E\mat{G}) \quad \text{and} \quad \sigma^2 = n\lambda_1(\mat{C}^2). \]
+Then, for any $t \geq 0,$
+\[	
+ \Prob{ \lambda_1\Big(\sum\nolimits_i \mat{G}_i\Big) \geq \mu + t } \leq d \cdot \exp\Big(- \frac{t^2/2}{\sigma^2 + At} \Big).
+\]
+\end{thm}
+
+\end{frame}
+
+\begin{frame}{Finishing the argument}
+For the summands $\mat{B}^\star \mat{x}_i \mat{x}_i^\star \mat{B},$ we have
+\[A = \sum_{i \geq k} \lambda_i \quad \text{and} \quad \sigma^2 = n \Big(\sum_{i \geq k} \lambda_i \Big) \cdot \lambda_1(\mat{B}^\star \mat{\Sigma} \mat{B}) = n \lambda_k \cdot \Big(\sum_{i \geq k} \lambda_i\Big).
+\]
+Thus, the Bernstein inequality gives
+\[
+ \Prob{\hat{\lambda}_k \geq \lambda_k +t} \leq (p-k+1)\cdot \exp\left( \frac{-nt^2}{32\lambda_k \sum_{i \geq k} \lambda_i } \right) \quad \text{ for } t \leq 4n \lambda_k.
+\]
+Finally, take $t = \varepsilon \lambda_k$ to see
+\[
+ \Prob{\hat{\lambda}_k \geq (1+\varepsilon) \lambda_k} \leq (p-k+1)\cdot \exp\left( \frac{-n\varepsilon^2}{32\sum_{i \geq k} \frac{\lambda_i}{\lambda_k} } \right) \quad \text{ for } \varepsilon \leq 4n.
+\]
+The proof for the case $\hat{\lambda}_k \leq \lambda_k - t$ is similar.
+\qed
+\end{frame}
+
+\begin{frame}{Details}
+\begin{description}\itemsep10pt
+\item[Paper]
+``{\it Tail Bounds for All Eigenvalues of A Sum of Random Matrices}'', Gittens and Tropp, 2011. Preprint, \href{http://arxiv.org/abs/1104.4513}{arXiv:1104.4513}.
+\begin{itemize}
+\item Elaboration on the relative-error covariance eigenvalue estimation results.
+\item Similar arguments to find tail bounds for all eigenvalues of a sum of \emph{arbitrary} random matrices.
+\item An application to column subsampling.
+\end{itemize}
+
+\item[Contact]
+Alex Gittens \newline
+\href{mailto:gittens@caltech.edu}{gittens@caltech.edu} \newline
+\href{http://users.cms.caltech.edu/~gittens}{\url{http://users.cms.caltech.edu/~gittens}}
+\end{description}
+
+
+\end{frame}
+\end{document}
+

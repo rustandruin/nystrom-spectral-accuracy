@@ -1,0 +1,25 @@
+comments on stability of nystrom algorithms :
+
+- doesn't seem to be a way to show CWpCt is backward stable; it probably isn't: even A^{-1} B isn't backward stable in general. point out that in Drineas et al., the authors point out this is a question that bears investigation (so I'm not just being lazy). explicit counterexamples?
+
+- how important is stability? Gaussian elimination with partial pivoting isn't theoretically stable, but in practice it is (cf Higham MIMS preprint 2011.16 on Gaussian elimination).
+
+- stability may be linked to the conditioning (or just minimum singular value) of W. sampling w/ different distributions may give better conditioning, so worth asking in future research. E.g. does using subspace sampling probs or SRHT (which flattens leverage scores) mean likely to be more stable?
+
+- may have conditional stability, b/c of properties of the Sylvester eqn: when solution is well-conditioned, have conditional stability
+
+- ideas to improve stability: 
+
+1) use subset selection to choose very linearly independent columns of C --- this will lead to less than rank k approximations, but probably numerically stabler --- does this make W better conditioned, and therefore the pseudoinversion more stable? how many columns of A would you need to ensure that there's a set of k nicely independent columns in C?
+
+2) use Tikhonov regularization: instead of WpCt, compute solution to
+min ||WX - Ct|| + alpha||X||.
+analysis complicated because then no longer have projection. How do numerical results look?
+
+3) make W have bounded minimum singular value, W = W + alpha I. analysis gives bad bound: something like error of column-wise sparsification. How do numerical results look?
+
+4) Truncate svd of W before applying pseudoinverse. See Demanet's analysis: can this be extended to CUR where C = R? Does he really address stability (seems not, just conditioning of W, which is related, but not same)?
+
+- stability matters only if we aren't willing to do a numerical test to see how close our approx is to the original. if we're willing to e.g. test the spectral error w/ Gaussians, we can get a posteriori guarantees on the error, and then rerun if necessary
+
+- on a related note, do we have probabilistic stability? i.e. if you run this algo a constant number of times, one of the solutions is stable?
